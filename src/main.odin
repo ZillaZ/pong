@@ -68,9 +68,6 @@ new_physics :: proc(host_info: HostInfo) -> PhysicsEngine {
 physics_update :: proc(engine: ^PhysicsEngine) {
     for id, &object in engine.rigid_bodies {
         vector := check_collisions(engine, id, object^)
-        if object.actual_speed != vector {
-            fmt.println("XERECAKKKKKK")
-        }
         object.actual_speed = vector
         object.position += object.actual_speed * raylib.GetFrameTime()
         update_real_position(&engine.host_info, &object.position, &object.real_position)
@@ -85,6 +82,7 @@ check_collisions :: proc(engine: ^PhysicsEngine, id: i32, object: Object) -> ray
             if id == other_id {continue}
             switch shape in other_object.shape {
             case Box:
+                raylib.DrawRectangleRec(shape.rectangle, raylib.BROWN)
                 collided := raylib.CheckCollisionRecs(object_box.rectangle, shape.rectangle)
                 if collided {
                     return -object.actual_speed
@@ -135,14 +133,32 @@ main :: proc() {
     gameloop(&host_info)
 }
 
-create_boundings :: proc(host_info: ^HostInfo) -> Boundings {
-    border_x := host_info.window_size.x * 0.01
-    border_y := host_info.window_size.y * 0.8
-    border_color := raylib.RED
-    return Boundings {
-        raylib.Vector2({border_x, border_y}),
-        border_color
+create_boundings :: proc(host_info: ^HostInfo) -> [4]raylib.Rectangle {
+    left_bounding := raylib.Rectangle {
+        host_info.space_unit.x * 10,
+        host_info.space_unit.y * 10,
+        host_info.space_unit.x,
+        host_info.space_unit.y * 80
     }
+    upper_bounding := raylib.Rectangle {
+        host_info.space_unit.x * 10,
+        host_info.space_unit.y * 10,
+        host_info.space_unit.x * 80,
+        host_info.space_unit.y
+    }
+    right_bounding := raylib.Rectangle {
+        host_info.space_unit.x * 90,
+        host_info.space_unit.y * 10,
+        host_info.space_unit.x,
+        host_info.space_unit.y * 80
+    }
+    bottom_bounding := raylib.Rectangle {
+        host_info.space_unit.x * 10,
+        host_info.space_unit.y * 90,
+        host_info.space_unit.x * 80,
+        host_info.space_unit.y
+    }
+    return {left_bounding, upper_bounding, right_bounding, bottom_bounding}
 }
 
 create_player :: proc(host_info: ^HostInfo, position: raylib.Vector2, input_map: map[raylib.KeyboardKey]raylib.Vector2) -> Player {
@@ -197,6 +213,26 @@ add_object :: proc(engine: ^PhysicsEngine, object: ^Object) {
 gameloop :: proc(host_info: ^HostInfo) {
     engine := new_physics(host_info^)
     boundings := create_boundings(host_info)
+    object := Object {
+        {0, 0},
+        Sphere {
+            0.0
+        },
+        {0.0, 0.0},
+        {0.0, 0.0}
+    }
+    objects : [4]Object = {object, object, object, object}
+    for bounding, i in boundings {
+        objects[i] = Object {
+            ({bounding.x, bounding.y} / host_info.space_unit),
+            Box {
+                bounding
+            },
+            {0.0, 0.0},
+            {bounding.x, bounding.y}
+        }
+        add_object(&engine, &objects[i])
+    }
     player_one := create_player_one(host_info)
     player_two := create_player_two(host_info)
     ball := create_ball(host_info)
@@ -234,14 +270,13 @@ draw_player :: proc(player: ^Player) {
     raylib.DrawRectangleRec(player.object.shape.(Box).rectangle, raylib.WHITE)
 }
 
-draw_boundings :: proc(host_info: ^HostInfo, boundings: ^Boundings) {
-    raylib.DrawRectangleV(raylib.Vector2({host_info.window_size.x * 0.1, host_info.window_size.y * 0.1}), boundings.border_size, boundings.border_color)
-    raylib.DrawRectangleV(raylib.Vector2({host_info.window_size.x * 0.1, host_info.window_size.y * 0.9}), boundings.border_size.yx, raylib.GOLD)
-    raylib.DrawRectangleV(raylib.Vector2({host_info.window_size.x * 0.9, host_info.window_size.y * 0.1}), boundings.border_size, raylib.PINK)
-    raylib.DrawRectangleV(raylib.Vector2({host_info.window_size.x * 0.1, host_info.window_size.y * 0.1}), boundings.border_size.yx, raylib.BLUE)
+draw_boundings :: proc(host_info: ^HostInfo, boundings: ^[4]raylib.Rectangle) {
+    for bounding in boundings {
+        raylib.DrawRectangleRec(bounding, raylib.GOLD)
+    }
 }
 
-resize_things :: proc(host_info: ^HostInfo, player_one: ^Player, player_two: ^Player, boundings: ^Boundings) {
+resize_things :: proc(host_info: ^HostInfo, player_one: ^Player, player_two: ^Player, boundings: ^[4]raylib.Rectangle) {
     host_info^ = create_host_info()
     boundings^ = create_boundings(host_info)
     resize_player(host_info, player_one)
@@ -298,7 +333,7 @@ create_ball :: proc(host_info: ^HostInfo) -> Ball {
             Sphere {
                 radius
             },
-            {25.0, 0.0},
+            {75.0, 0.0},
             real_position
         }
     }
