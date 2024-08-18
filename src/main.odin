@@ -3,8 +3,23 @@ package main
 import "core:math/linalg"
 import "core:math/rand"
 import "core:math/big"
+import "core:strconv"
+import "core:strings"
 import "core:fmt"
 import "vendor:raylib"
+
+Kind :: enum {
+    Bounding,
+    Left,
+    Right,
+    Ball,
+    Player
+}
+
+Result :: union {
+    raylib.Vector2,
+    string
+}
 
 Empty :: struct {}
 
@@ -26,7 +41,7 @@ Object :: struct {
     shape: Shape,
     actual_speed: raylib.Vector2,
     real_position: raylib.Vector2,
-    name: string,
+    kind: Kind,
     collision_set: map[i32]Empty
 }
 
@@ -43,7 +58,8 @@ Boundings :: struct {
 Player :: struct {
     speed: f32,
     input_map: map[raylib.KeyboardKey]raylib.Vector2,
-    object: Object
+    object: Object,
+    points: int
 }
 
 Ball :: struct {
@@ -70,22 +86,28 @@ new_physics :: proc(host_info: HostInfo) -> PhysicsEngine {
     }
 }
 
-physics_update :: proc(engine: ^PhysicsEngine) {
+physics_update :: proc(engine: ^PhysicsEngine) -> (bool, string) {
     for id, &object in engine.rigid_bodies {
-        vector := check_collisions(engine, id, object)
-        object.actual_speed = vector
-        object.position += object.actual_speed * raylib.GetFrameTime()
-        update_real_position(&engine.host_info, &object.position, &object.real_position)
+        result := check_collisions(engine, id, object)
+        vector, ok := result.(raylib.Vector2)
+        if ok {
+            object.actual_speed = vector
+            object.position += object.actual_speed * raylib.GetFrameTime()
+            update_real_position(&engine.host_info, &object.position, &object.real_position)
+        }else{
+            return true, result.(string)
+        }
     }
+    return false, ""
 }
 
-helper :: proc(collided: bool, object: ^Object, other_object: ^Object, other_id: i32, host_info: HostInfo) -> raylib.Vector2{
-    if object.name == "Bounding" {
+helper :: proc(collided: bool, object: ^Object, other_object: ^Object, other_id: i32, host_info: HostInfo) -> raylib.Vector2 {
+    if object.kind == Kind.Bounding {
         return {0.0, 0.0}
     }
     is_colliding, is_ok := object.collision_set[other_id]
     rec, ok := other_object.shape.(Box)
-    if object.name == "Ball" && other_object.name == "Player" && ok {
+    if object.kind == Kind.Ball && other_object.kind == Kind.Player && ok {
         vector := (object.real_position - (other_object.real_position + {0.0, rec.rectangle.height / 2}))
         angle := linalg.angle_between(other_object.real_position + {0.0, rec.rectangle.height / 2}, object.real_position)
         raylib.DrawLineV(object.real_position, other_object.real_position + {0.0, rec.rectangle.height / 2}, raylib.LIME)
@@ -93,7 +115,7 @@ helper :: proc(collided: bool, object: ^Object, other_object: ^Object, other_id:
         raylib.DrawLineV(object.real_position, object.real_position + object.actual_speed, raylib.PINK)
     }
     if !is_ok {
-        if collided && other_object.name == "Player" {
+        if collided && other_object.kind == Kind.Player {
             map_insert(&object.collision_set, other_id, Empty{})
             angle := linalg.angle_between(other_object.real_position + {0.0, rec.rectangle.height / 2}, object.real_position)
             vector := (object.real_position - (other_object.real_position + {0.0, rec.rectangle.height / 2}))
@@ -111,7 +133,17 @@ helper :: proc(collided: bool, object: ^Object, other_object: ^Object, other_id:
     return raylib.Vector2(0.0)
 }
 
-check_collisions :: proc(engine: ^PhysicsEngine, id: i32, object: ^Object) -> raylib.Vector2 {
+draw_points :: proc(host_info: ^HostInfo, player_one, player_two: ^Player) {
+    buffer : [10]u8
+    buffer_two : [10]u8
+    fmt.println(player_one.points, player_two.points)
+    val_one := strconv.itoa(buffer[:], player_one.points)
+    val_two := strconv.itoa(buffer_two[:], player_two.points)
+    raylib.DrawText(strings.clone_to_cstring(val_one), i32(host_info.space_unit.x * 5), i32(host_info.space_unit.y * 3), i32(host_info.space_unit.x * 7), raylib.WHITE)
+    raylib.DrawText(strings.clone_to_cstring(val_two), i32(host_info.space_unit.x * 90), i32(host_info.space_unit.y * 3), i32(host_info.space_unit.x * 7), raylib.WHITE)
+}
+
+check_collisions :: proc(engine: ^PhysicsEngine, id: i32, object: ^Object) -> Result {
     object_box, ok := object.shape.(Box)
     object_sphere, _ := object.shape.(Sphere)
     rtn : [2]f32 = {0.0, 0.0}
@@ -134,6 +166,12 @@ check_collisions :: proc(engine: ^PhysicsEngine, id: i32, object: ^Object) -> ra
             switch shape in other_object.shape {
             case Box:
                 collided = raylib.CheckCollisionCircleRec(object.real_position, object_sphere.radius, shape.rectangle)
+                if collided && other_object.kind == Kind.Left {
+                    return "two"
+                }
+                if collided && other_object.kind == Kind.Right {
+                    return "one"
+                }
             case Sphere:
                 collided = raylib.CheckCollisionCircles(object.real_position, object_sphere.radius, other_object.real_position, shape.radius)
             }
@@ -144,6 +182,21 @@ check_collisions :: proc(engine: ^PhysicsEngine, id: i32, object: ^Object) -> ra
         return object.actual_speed
     }
     return rtn
+}
+
+reset_game :: proc(host_info: ^HostInfo, player_one, player_two: ^Player, ball: ^Ball, which: string) {
+    player_one_points := player_one.points
+    player_two_points := player_two.points
+    player_one^ = create_player_one(host_info)
+    player_two^ = create_player_two(host_info)
+    ball^ = create_ball(host_info)
+    if which == "one" {
+        player_one.points += 1
+    }else{
+        player_two.points += 1
+    }
+    player_one.points += player_one_points
+    player_two.points += player_two_points
 }
 
 create_host_info :: proc() -> HostInfo {
@@ -215,9 +268,10 @@ create_player :: proc(host_info: ^HostInfo, position: raylib.Vector2, input_map:
             },
             {0.0, 0.0},
             real_position,
-            "Player",
+            Kind.Player,
             make(map[i32]Empty)
-        }
+        },
+        0
     }
 }
 
@@ -258,7 +312,7 @@ gameloop :: proc(host_info: ^HostInfo) {
         },
         {0.0, 0.0},
         {0.0, 0.0},
-        "dummy",
+        Kind.Bounding,
         make(map[i32]Empty)
     }
     objects : [4]Object = {object, object, object, object}
@@ -270,8 +324,14 @@ gameloop :: proc(host_info: ^HostInfo) {
             },
             {0.0, 0.0},
             {bounding.x, bounding.y},
-            "Bounding",
+            Kind.Bounding,
             make(map[i32]Empty)
+        }
+        if i == 0 {
+            objects[i].kind = Kind.Left
+        }
+        if i == 2 {
+            objects[i].kind = Kind.Right
         }
         add_object(&engine, &objects[i])
     }
@@ -284,7 +344,7 @@ gameloop :: proc(host_info: ^HostInfo) {
     nboundings : [4]^Object
     count := 0
     for _, body in &engine.rigid_bodies {
-        if body.name == "Bounding" {
+        if body.kind == Kind.Bounding || body.kind == Kind.Left || body.kind == Kind.Right {
             nboundings[count] = body
             count += 1
         }
@@ -293,10 +353,15 @@ gameloop :: proc(host_info: ^HostInfo) {
         if raylib.IsWindowResized() {
             resize_things(host_info, &player_one, &player_two, nboundings, &ball)
         }
-        physics_update(&engine)
+        result, which := physics_update(&engine)
+        if result {
+            reset_game(host_info, &player_one, &player_two, &ball, which)
+        }
+        fmt.println(result)
         move_player(host_info, &player_one)
         move_player(host_info, &player_two)
         raylib.BeginDrawing()
+        draw_points(&engine.host_info, &player_one, &player_two)
         draw_player(&player_one)
         draw_player(&player_two)
         draw_ball(&ball)
@@ -412,7 +477,7 @@ create_ball :: proc(host_info: ^HostInfo) -> Ball {
             },
             {host_info.space_unit.x * 5, 0.0},
             real_position,
-            "Ball",
+            Kind.Ball,
             make(map[i32]Empty)
         }
     }
