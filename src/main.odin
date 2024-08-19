@@ -150,7 +150,7 @@ helper :: proc(collided: bool, object: ^Object, other_object: ^Object, other_id:
             vector := (object.real_position - (other_object.real_position + {0.0, rec.rectangle.height / 2}))
             rotated := raylib.Vector2Rotate(vector, 0.0)
             fmt.println(linalg.normalize(rotated) * 75)
-            return linalg.normalize(([2]f32){rotated.x, -rotated.y}) * linalg.length(object.actual_speed)
+            return linalg.normalize(([2]f32){rotated.x, -rotated.y})
         }else if collided {
             return object.actual_speed * {1.0, -1.0}
         }
@@ -207,10 +207,10 @@ check_collisions :: proc(engine: ^PhysicsEngine, id: i32, object: ^Object) -> Re
             rtn += helper(collided, object, other_object, other_id, engine.host_info)
         }
     }
-    if linalg.length(rtn) < 1.0 {
+    if rtn == {0.0, 0.0} {
         return object.actual_speed
     }
-    return rtn
+    return linalg.normalize(rtn) * linalg.length(object.actual_speed)
 }
 
 reset_game :: proc(host_info: ^HostInfo, player_one, player_two: ^Player, ball: ^Ball, which: string) {
