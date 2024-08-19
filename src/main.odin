@@ -8,6 +8,24 @@ import "core:strings"
 import "core:fmt"
 import "vendor:raylib"
 
+Game :: struct {
+    state: GameState,
+    kind: GameKind
+}
+
+GameState :: enum {
+    MainMenu,
+    MultiplayerMenu,
+    InGame,
+    PauseMenu
+}
+
+GameKind :: enum {
+    SinglePlayer,
+    LocalMultiplayer,
+    OnlineMultiplayer
+}
+
 Kind :: enum {
     Bounding,
     Left,
@@ -101,6 +119,17 @@ physics_update :: proc(engine: ^PhysicsEngine) -> (bool, string) {
     return false, ""
 }
 
+draw_ball_speed :: proc(host_info: ^HostInfo, ball: ^Ball) {
+    xbuffer : [10]u8
+    ybuffer : [10]u8
+    total_buffer : [10]u8
+    xspeed := strconv.ftoa(xbuffer[:], f64(ball.object.actual_speed.x), 'f', 2, 64)
+    yspeed := strconv.ftoa(ybuffer[:], f64(ball.object.actual_speed.y), 'f', 2, 64)
+    total_speed := strconv.ftoa(total_buffer[:], f64(linalg.length(ball.object.actual_speed)), 'f', 2, 64)
+    speed, _ := strings.join({"[", xspeed, " ",  yspeed, "] ", total_speed}, "")
+    raylib.DrawText(strings.clone_to_cstring(speed), i32(host_info.space_unit.x * 40), i32(host_info.space_unit.x * 3), i32(host_info.space_unit.x * 2), raylib.WHITE)
+}
+
 helper :: proc(collided: bool, object: ^Object, other_object: ^Object, other_id: i32, host_info: HostInfo) -> raylib.Vector2 {
     if object.kind == Kind.Bounding {
         return {0.0, 0.0}
@@ -121,7 +150,7 @@ helper :: proc(collided: bool, object: ^Object, other_object: ^Object, other_id:
             vector := (object.real_position - (other_object.real_position + {0.0, rec.rectangle.height / 2}))
             rotated := raylib.Vector2Rotate(vector, 0.0)
             fmt.println(linalg.normalize(rotated) * 75)
-            return linalg.normalize(([2]f32){rotated.x, -rotated.y}) * host_info.space_unit * 5
+            return linalg.normalize(([2]f32){rotated.x, -rotated.y}) * linalg.length(object.actual_speed)
         }else if collided {
             return object.actual_speed * {1.0, -1.0}
         }
@@ -209,6 +238,10 @@ create_host_info :: proc() -> HostInfo {
 }
 
 main :: proc() {
+    game := Game {
+        GameState.MainMenu,
+        GameKind.SinglePlayer
+    }
     x := raylib.GetScreenWidth()
     y := raylib.GetScreenHeight()
     raylib.InitWindow(x, y, "Hello, Raylib!")
@@ -218,7 +251,14 @@ main :: proc() {
     defer raylib.CloseWindow()
     camera := create_2d_camera()
     raylib.BeginMode2D(camera)
-    gameloop(&host_info)
+    for !raylib.WindowShouldClose() {
+        #partial switch game.state {
+            case .MainMenu:
+            draw_menu(&host_info, &game)
+            case .InGame:
+            gameloop(&host_info, &game)
+        }
+    }
 }
 
 create_boundings :: proc(host_info: ^HostInfo) -> [4]raylib.Rectangle {
@@ -302,7 +342,7 @@ add_object :: proc(engine: ^PhysicsEngine, object: ^Object) {
     map_insert(&engine.rigid_bodies, rand.int31(), object)
 }
 
-gameloop :: proc(host_info: ^HostInfo) {
+gameloop :: proc(host_info: ^HostInfo, game: ^Game) {
     engine := new_physics(host_info^)
     boundings := create_boundings(host_info)
     object := Object {
@@ -350,24 +390,32 @@ gameloop :: proc(host_info: ^HostInfo) {
         }
     }
     for !raylib.WindowShouldClose() {
+        raylib.BeginDrawing()
+        raylib.ClearBackground(raylib.BLACK)
         if raylib.IsWindowResized() {
             resize_things(host_info, &player_one, &player_two, nboundings, &ball)
+        }
+        if raylib.IsKeyPressed(raylib.KeyboardKey.ENTER) {
+            game.state = GameState.MainMenu
+            raylib.EndDrawing()
+            return
         }
         result, which := physics_update(&engine)
         if result {
             reset_game(host_info, &player_one, &player_two, &ball, which)
         }
         fmt.println(result)
-        move_player(host_info, &player_one)
-        move_player(host_info, &player_two)
-        raylib.BeginDrawing()
+        draw_ball_speed(host_info, &ball)
+        move_players(host_info, &player_one, &player_two, game, &ball)
         draw_points(&engine.host_info, &player_one, &player_two)
         draw_player(&player_one)
         draw_player(&player_two)
         draw_ball(&ball)
         draw_boundings(host_info, nboundings)
-        raylib.ClearBackground(raylib.BLACK)
         raylib.EndDrawing()
+        if raylib.IsKeyPressed(raylib.KeyboardKey.ENTER) {
+            game.state = GameState.MainMenu
+        }
     }
 }
 
@@ -375,10 +423,29 @@ draw_ball :: proc(ball: ^Ball) {
     raylib.DrawCircleV(ball.object.real_position, ball.object.shape.(Sphere).radius * 0.75, ball.color)
 }
 
-move_player :: proc(host_info: ^HostInfo, player: ^Player) {
-    movement_vector := read_input(player.input_map)
-    move(host_info, player, &movement_vector)
-    update_real_position(host_info, &player.object.position, &player.object.real_position)
+move_players :: proc(host_info: ^HostInfo, player_one, player_two: ^Player, game: ^Game, ball: ^Ball) {
+    #partial switch game.kind {
+        case .SinglePlayer:
+        movement_vector := read_input(player_one.input_map)
+        move(host_info, player_one, &movement_vector)
+        update_real_position(host_info, &player_one.object.position, &player_one.object.real_position)
+        movement_vector = calculate_cpu_movement(player_two, ball)
+        move(host_info, player_two, &movement_vector)
+        update_real_position(host_info, &player_two.object.position, &player_two.object.real_position)
+    case .LocalMultiplayer:
+        movement_vector := read_input(player_one.input_map)
+        move(host_info, player_one, &movement_vector)
+        update_real_position(host_info, &player_one.object.position, &player_two.object.real_position)
+        movement_vector = read_input(player_two.input_map)
+        move(host_info, player_two, &movement_vector)
+        update_real_position(host_info, &player_two.object.position, &player_two.object.real_position)
+    }
+}
+
+calculate_cpu_movement :: proc(player: ^Player, ball: ^Ball) -> raylib.Vector2 {
+    distance := ball.object.position - player.object.position
+    distance.x = 0
+    return linalg.normalize(distance)
 }
 
 draw_player :: proc(player: ^Player) {
@@ -480,5 +547,32 @@ create_ball :: proc(host_info: ^HostInfo) -> Ball {
             Kind.Ball,
             make(map[i32]Empty)
         }
+    }
+}
+draw_menu :: proc(host_info: ^HostInfo, game: ^Game) {
+    raylib.BeginDrawing()
+    font_size := host_info.space_unit.x * 3
+    title := "Pong Fodase"
+    raylib.DrawText(strings.clone_to_cstring(title), i32(host_info.space_unit.x * 50) - i32(font_size) * i32(i32(len(title)) / 3), i32(host_info.space_unit.y * 10), i32(font_size), raylib.RED)
+    if raylib.GuiButton(create_rectangle(host_info, {30, 5}, {50 - 15, 50}), "Local Multiplayer") {
+        game.state = GameState.InGame
+        game.kind = GameKind.LocalMultiplayer
+    }
+    if raylib.GuiButton(create_rectangle(host_info, {30, 5}, {50 - 15, 60}), "Single Player") {
+        game.state = GameState.InGame
+        game.kind = GameKind.SinglePlayer
+    }
+    raylib.GuiButton(create_rectangle(host_info, {30, 5}, {50 - 15, 55}), "Online Multiplayer")
+    raylib.EndDrawing()
+}
+
+create_rectangle :: proc(host_info: ^HostInfo, size, position: raylib.Vector2) -> raylib.Rectangle {
+    real_position := host_info.space_unit * position
+    real_size := host_info.space_unit * size
+    return raylib.Rectangle {
+        real_position.x,
+        real_position.y,
+        real_size.x,
+        real_size.y
     }
 }
